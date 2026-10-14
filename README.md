@@ -39,7 +39,7 @@ Use the immutable Git SHA tag for repeatable deployments. GHCR visibility must b
 
 ## Deploy to Azure Container Apps
 
-Follow [AZURE_DEPLOY.md](AZURE_DEPLOY.md). It uses the Consumption plan, disables Log Analytics ingestion by default to avoid a separate ingestion bill, and configures zero minimum replicas and one maximum replica. Azure's free allowances are not a hard spending cap.
+Follow [AZURE_DEPLOY.md](AZURE_DEPLOY.md), or run `bash deploy-azure.sh` from Azure Cloud Shell for a guarded deployment and an authenticated 768-dimensional smoke test. The script asks you to confirm the subscription and explicitly approve resource creation, disables Log Analytics ingestion by default, and saves OpenDots settings with restrictive file permissions in your Cloud Shell home directory. Run it only after the latest GHCR workflow succeeds and the image package is Public. Azure's free allowances are not a hard spending cap.
 
 ## OpenDots configuration
 

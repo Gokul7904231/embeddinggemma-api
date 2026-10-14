@@ -7,7 +7,6 @@ RESOURCE_GROUP="rg-opendots"
 ENVIRONMENT="env-opendots"
 APP_NAME="embeddinggemma2-api"
 IMAGE="ghcr.io/gokul7904231/embeddinggemma2:latest"
-CONFIG_FILE="$HOME/opendots-embedding.env"
 
 command -v az >/dev/null || { echo "Azure CLI (az) is required." >&2; exit 1; }
 command -v openssl >/dev/null || { echo "openssl is required to generate a strong API key." >&2; exit 1; }
@@ -107,9 +106,7 @@ if [[ "$HEALTH_OK" -ne 1 ]]; then
 fi
 
 echo "Health check passed. Testing a real embedding request..."
-read -r -d '' TEST_BODY <<'JSON' || true
-{"input":"OpenDots EmbeddingGemma API smoke test","model":"embeddinggemma-2","task":"query","dimensions":768}
-JSON
+TEST_BODY='{"input":"OpenDots EmbeddingGemma API smoke test","model":"embeddinggemma-2","task":"query","dimensions":768}'
 RESPONSE="$(curl --connect-timeout 5 --max-time 180 --fail --silent --show-error \
   "https://$FQDN/v1/embeddings" \
   -H "Authorization: Bearer $EMBED_API_KEY" \

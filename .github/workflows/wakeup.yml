@@ -1,0 +1,28 @@
+name: Wake Up Render Service
+
+on:
+  schedule:
+    # Runs every 10 minutes
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render App
+        env:
+          APP_URL: ${{ secrets.RENDER_APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "Error: RENDER_APP_URL secret is not set."
+            exit 1
+          fi
+          echo "Pinging $APP_URL..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL")
+          echo "HTTP Status: $response"
+          if [ "$response" -eq 200 ] || [ "$response" -eq 401 ]; then
+            echo "Successfully woke up Render service!"
+          else
+            echo "Warning: Received HTTP status $response"
+          }

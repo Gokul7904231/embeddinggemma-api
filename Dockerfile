@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    MODEL_PATH=/app/model_440m
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Download google/embeddinggemma-2 WITHOUT the 300M audio encoder and save to /app/model_440m
+RUN python -c "\
+import torch; \
+from sentence_transformers import SentenceTransformer; \
+model = SentenceTransformer( \
+    'google/embeddinggemma-2', \
+    model_kwargs={'torch_dtype': torch.bfloat16}, \
+    config_kwargs={'audio_config': None} \
+); \
+model.save('/app/model_440m')" && rm -rf /root/.cache/huggingface
+
+COPY app.py .
+
+EXPOSE 8000
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

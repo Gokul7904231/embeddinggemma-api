@@ -1,5 +1,9 @@
-fastapi
-uvicorn
-transformers
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch
-sentence-transformers
+torchvision
+transformers>=5.0.0
+sentence-transformers[image]>=6.1.0
+pillow
+fastapi
+uvicorn[standard]
+python-multipart

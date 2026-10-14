@@ -1,25 +1,40 @@
 import io
 import os
+import secrets
+from typing import Any, Dict, List, Union
+
 import torch
-from fastapi import FastAPI, Header, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
-from typing import Union, List, Dict, Any
-from PIL import Image
 from sentence_transformers import SentenceTransformer
 
-app = FastAPI(title="EmbeddingGemma-2 OpenAI + Multimodal API")
+app = FastAPI(title="EmbeddingGemma 2 OpenAI-Compatible Embeddings API")
 
-EXPECTED_KEY = os.getenv("EMBED_API_KEY", "opendots-secret-key-123")
+# Never ship a usable default credential in source control or the image.
+EXPECTED_KEY = os.getenv("EMBED_API_KEY", "").strip()
+if not EXPECTED_KEY:
+    raise RuntimeError("EMBED_API_KEY is required. Configure it as a platform secret.")
+
 MODEL_PATH = os.getenv("MODEL_PATH", "/app/model_440m")
+MODEL_DTYPE_NAME = os.getenv("MODEL_DTYPE", "float32").lower()
+MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "64"))
+MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
 
-print(f"[*] Loading pre-stripped 440M model from {MODEL_PATH}...")
+DTYPES = {
+    "float32": torch.float32,
+    "bfloat16": torch.bfloat16,
+}
+if MODEL_DTYPE_NAME not in DTYPES:
+    raise RuntimeError("MODEL_DTYPE must be 'float32' or 'bfloat16'.")
+
+print(f"[*] Loading EmbeddingGemma 2 from {MODEL_PATH} with {MODEL_DTYPE_NAME}...")
 model = SentenceTransformer(
     MODEL_PATH,
-    model_kwargs={"torch_dtype": torch.bfloat16},
+    model_kwargs={"torch_dtype": DTYPES[MODEL_DTYPE_NAME]},
 )
-print("[*] Model loaded and ready!")
+print("[*] EmbeddingGemma 2 loaded and ready.")
 
-# Matches official EmbeddingGemma 2 Prompt Names from the Model Card
 TASK_MAP = {
     "query": "SearchQuery",
     "document": "Document",
@@ -30,28 +45,63 @@ TASK_MAP = {
     "clustering": "Clustering",
     "similarity": "SentenceSimilarity",
 }
+SUPPORTED_DIMENSIONS = (128, 256, 512, 768)
+
 
 class EmbeddingRequest(BaseModel):
     input: Union[str, List[Union[str, Dict[str, Any]]]]
     model: str = "embeddinggemma-2"
     task: str = "query"
-    dimensions: int = 768  # Supports MRL truncation: 768, 512, 256, 128
+    dimensions: int = 768
+
+
+def require_api_key(authorization: str) -> None:
+    expected = f"Bearer {EXPECTED_KEY}"
+    if not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+def validate_dimensions(dimensions: int) -> Union[int, None]:
+    if dimensions not in SUPPORTED_DIMENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"dimensions must be one of {SUPPORTED_DIMENSIONS}",
+        )
+    return dimensions if dimensions != 768 else None
+
 
 @app.get("/")
 @app.get("/health")
-def health():
-    return {"status": "ok", "model": "google/embeddinggemma-2 (440M Text+Code+Image)"}
+def health() -> Dict[str, str]:
+    return {"status": "ok", "model": "embeddinggemma-2"}
+
 
 @app.post("/v1/embeddings")
-def create_embeddings(req: EmbeddingRequest, authorization: str = Header(default="")):
-    if EXPECTED_KEY and authorization != f"Bearer {EXPECTED_KEY}":
-        raise HTTPException(status_code=401, detail="Invalid API Key")
+def create_embeddings(
+    req: EmbeddingRequest,
+    authorization: str = Header(default=""),
+) -> Dict[str, Any]:
+    require_api_key(authorization)
 
     inputs = [req.input] if not isinstance(req.input, list) else req.input
-    is_media = any(isinstance(x, dict) for x in inputs)
+    if not inputs:
+        raise HTTPException(status_code=422, detail="input must not be empty")
+    if len(inputs) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"batch exceeds the configured limit of {MAX_BATCH_SIZE} inputs",
+        )
+    if any(isinstance(item, str) and not item.strip() for item in inputs):
+        raise HTTPException(status_code=422, detail="input strings must not be empty")
+    if req.task not in TASK_MAP:
+        raise HTTPException(
+            status_code=422,
+            detail=f"task must be one of {tuple(TASK_MAP.keys())}",
+        )
 
-    prompt_name = None if is_media else TASK_MAP.get(req.task, "SearchQuery")
-    truncate_dim = req.dimensions if req.dimensions in (128, 256, 512, 768) else None
+    contains_multimodal_input = any(isinstance(item, dict) for item in inputs)
+    prompt_name = None if contains_multimodal_input else TASK_MAP[req.task]
+    truncate_dim = validate_dimensions(req.dimensions)
 
     vectors = model.encode(
         inputs,
@@ -63,29 +113,43 @@ def create_embeddings(req: EmbeddingRequest, authorization: str = Header(default
     return {
         "object": "list",
         "data": [
-            {"object": "embedding", "index": i, "embedding": vec.tolist()}
-            for i, vec in enumerate(vectors)
+            {"object": "embedding", "index": i, "embedding": vector.tolist()}
+            for i, vector in enumerate(vectors)
         ],
         "model": req.model,
         "usage": {"prompt_tokens": 0, "total_tokens": 0},
     }
+
 
 @app.post("/v1/embed/image")
 async def embed_image(
     file: UploadFile = File(...),
     dimensions: int = Form(768),
     authorization: str = Header(default=""),
-):
-    if EXPECTED_KEY and authorization != f"Bearer {EXPECTED_KEY}":
-        raise HTTPException(status_code=401, detail="Invalid API Key")
+) -> Dict[str, Any]:
+    require_api_key(authorization)
+    truncate_dim = validate_dimensions(dimensions)
 
-    raw = await file.read()
-    img = Image.open(io.BytesIO(raw)).convert("RGB")
-    truncate_dim = dimensions if dimensions in (128, 256, 512, 768) else None
+    raw = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"image exceeds the {MAX_IMAGE_BYTES}-byte upload limit",
+        )
 
-    vec = model.encode(img, truncate_dim=truncate_dim, normalize_embeddings=True)
+    try:
+        with Image.open(io.BytesIO(raw)) as source_image:
+            image_rgb = source_image.convert("RGB")
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid image")
+
+    vector = model.encode(
+        image_rgb,
+        truncate_dim=truncate_dim,
+        normalize_embeddings=True,
+    )
     return {
         "object": "list",
-        "data": [{"object": "embedding", "index": 0, "embedding": vec.tolist()}],
+        "data": [{"object": "embedding", "index": 0, "embedding": vector.tolist()}],
         "model": "embeddinggemma-2",
     }

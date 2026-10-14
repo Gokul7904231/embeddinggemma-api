@@ -23,7 +23,7 @@ LOCATION="centralindia"
 RG="rg-opendots"
 ENV_NAME="env-opendots"
 APP_NAME="embeddinggemma2-api"
-IMAGE="ghcr.io/gokul7904231/embeddinggemma2:latest"
+IMAGE="ghcr.io/gokul7904231/embeddinggemma2:3699f15092e191f26ab25e08f70e7da93cad4ff4"
 
 az extension add --name containerapp --upgrade --yes
 az provider register --namespace Microsoft.App --wait

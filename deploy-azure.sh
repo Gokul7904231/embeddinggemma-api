@@ -6,7 +6,7 @@ LOCATION="centralindia"
 RESOURCE_GROUP="rg-opendots"
 ENVIRONMENT="env-opendots"
 APP_NAME="embeddinggemma2-api"
-IMAGE="ghcr.io/gokul7904231/embeddinggemma2:latest"
+IMAGE="ghcr.io/gokul7904231/embeddinggemma2:3699f15092e191f26ab25e08f70e7da93cad4ff4"
 
 command -v az >/dev/null || { echo "Azure CLI (az) is required." >&2; exit 1; }
 command -v openssl >/dev/null || { echo "openssl is required to generate a strong API key." >&2; exit 1; }
